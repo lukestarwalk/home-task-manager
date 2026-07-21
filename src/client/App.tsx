@@ -26,6 +26,11 @@ function fmtDayIso(iso: string): string {
   const d = localDate(iso);
   return `${d.getDate()} ${mon(d, "short")}`;
 }
+function toIso(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
 
 /* -------------------------------------------------------------------- */
 /* Icons (inline SVG, from the design)                                   */
@@ -82,6 +87,12 @@ const VacIcon = () => (
 );
 const CheckIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" strokeWidth={3} {...stroke}><path d="M20 6 9 17l-5-5" /></svg>
+);
+const CalIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" strokeWidth={2} {...stroke}>
+    <rect x="3" y="4.5" width="18" height="16" rx="2.5" />
+    <path d="M3 9h18" /><path d="M8 3v3" /><path d="M16 3v3" />
+  </svg>
 );
 
 /* -------------------------------------------------------------------- */
@@ -281,23 +292,14 @@ function ScheduleCard({ schedule, today }: { schedule: ReturnType<typeof compute
   return (
     <section aria-label="Próximos dias" style={CARD}>
       <h2 style={{ ...H2, marginBottom: "12px" }}>Próximos dias</h2>
-      <div style={{ display: "flex", flexDirection: "column" }}>
+      <div className="day-list">
         {schedule.map((a) => {
           const isToday = a.date === today;
           const d = localDate(a.date);
           const label = isToday ? `hoje, ${d.getDate()} ${mon(d, "short")}` : fmtShort(d);
           const name = a.person ? a.person.name : a.allVacation ? "todos de férias" : "—";
           return (
-            <div
-              key={a.date}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px",
-                padding: isToday ? "10px 12px" : "10px 4px",
-                background: isToday ? "var(--teal-soft)" : "transparent",
-                borderRadius: isToday ? "12px" : "0",
-                borderBottom: isToday ? "none" : "1px solid var(--line)",
-              }}
-            >
+            <div key={a.date} className={isToday ? "day-row today" : "day-row"}>
               <span style={{ fontSize: "14px", fontWeight: isToday ? 800 : 600, color: isToday ? "var(--teal-text)" : "var(--muted)" }}>
                 {label}
               </span>
@@ -384,6 +386,100 @@ function PeopleCard({ state, run }: { state: AppState; run: (fn: () => Promise<u
   );
 }
 
+const WEEKDAYS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
+
+function DateField({
+  value, min, onChange, placeholder, rangeStart, rangeEnd, style,
+}: {
+  value: string;
+  min?: string;
+  onChange: (iso: string) => void;
+  placeholder: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+  style?: CSSProperties;
+}) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<Date>(() => {
+    const base = value ? localDate(value) : new Date();
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const base = value ? localDate(value) : new Date();
+    setView(new Date(base.getFullYear(), base.getMonth(), 1));
+  }, [open, value]);
+
+  const today = todayIso();
+  const year = view.getFullYear();
+  const month = view.getMonth();
+  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const shift = (delta: number) => setView(new Date(year, month + delta, 1));
+  const triggerLabel = value ? `${localDate(value).getDate()} ${mon(localDate(value), "short")} ${localDate(value).getFullYear()}` : placeholder;
+
+  return (
+    <div style={{ position: "relative", ...style }}>
+      <button
+        type="button"
+        className="field date select"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <span style={{ color: value ? "var(--text)" : "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {triggerLabel}
+        </span>
+        <span aria-hidden style={{ display: "flex", alignItems: "center", color: "var(--muted)" }}><CalIcon /></span>
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
+          <div className="cal-pop" role="dialog" aria-label="Escolher data">
+            <div className="cal-head">
+              <button type="button" className="cal-nav" onClick={() => shift(-1)} aria-label="Mês anterior">
+                <svg width="15" height="15" viewBox="0 0 24 24" strokeWidth={2.5} {...stroke}><path d="M15 6l-6 6 6 6" /></svg>
+              </button>
+              <span className="cal-title">{mon(view, "long")} {year}</span>
+              <button type="button" className="cal-nav" onClick={() => shift(1)} aria-label="Mês seguinte">
+                <svg width="15" height="15" viewBox="0 0 24 24" strokeWidth={2.5} {...stroke}><path d="M9 6l6 6-6 6" /></svg>
+              </button>
+            </div>
+            <div className="cal-grid">
+              {WEEKDAYS.map((w) => <span key={w} className="cal-wd">{w}</span>)}
+              {cells.map((day, i) => {
+                if (day === null) return <span key={`e${i}`} />;
+                const iso = toIso(new Date(year, month, day));
+                const disabled = min ? iso < min : false;
+                const selected = iso === value || iso === rangeStart || iso === rangeEnd;
+                const inRange = !selected && rangeStart !== "" && rangeEnd !== "" && rangeStart !== undefined && rangeEnd !== undefined && iso > rangeStart && iso < rangeEnd;
+                const cls = ["cal-cell", selected ? "selected" : "", inRange ? "in-range" : "", iso === today && !selected ? "today" : ""].filter(Boolean).join(" ");
+                return (
+                  <button
+                    key={iso}
+                    type="button"
+                    className={cls}
+                    disabled={disabled}
+                    aria-pressed={selected}
+                    onClick={() => { onChange(iso); setOpen(false); }}
+                  >
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function VacationsCard({ state, run }: { state: AppState; run: (fn: () => Promise<unknown>) => Promise<void> }) {
   const { people, vacations } = state;
   const [personId, setPersonId] = useState<number | "">("");
@@ -391,6 +487,7 @@ function VacationsCard({ state, run }: { state: AppState; run: (fn: () => Promis
   const [end, setEnd] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
+  const today = todayIso();
   const nameOf = (id: number) => people.find((p) => p.id === id)?.name ?? "?";
   const selectedName = personId === "" ? "Pessoa…" : nameOf(Number(personId));
   const disabled = personId === "" || !start || !end;
@@ -485,8 +582,8 @@ function VacationsCard({ state, run }: { state: AppState; run: (fn: () => Promis
           )}
         </div>
 
-        <input className="field date" style={{ flex: "1 1 140px" }} type="date" value={start} onChange={(e) => setStart(e.target.value)} aria-label="Início" />
-        <input className="field date" style={{ flex: "1 1 140px" }} type="date" value={end} min={start || undefined} onChange={(e) => setEnd(e.target.value)} aria-label="Fim" />
+        <DateField style={{ flex: "1 1 140px" }} value={start} min={today} onChange={setStart} placeholder="Início" rangeStart={start} rangeEnd={end} />
+        <DateField style={{ flex: "1 1 140px" }} value={end} min={start || today} onChange={setEnd} placeholder="Fim" rangeStart={start} rangeEnd={end} />
         <button className="primary-btn" style={{ flex: "1 1 120px" }} onClick={add} disabled={disabled}>Adicionar</button>
       </div>
     </section>
